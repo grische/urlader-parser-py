@@ -65,6 +65,18 @@ def parse_urlader_v2(urlader, endianess, offset):
     mtd2_offset = int(variables["mtd2_start"], 0)
     relative_last_data_position = last_data_position - mtd2_offset
 
+    pointers = read_variable_pointers(urlader, endianess, relative_last_data_position)
+
+    for pointer in pointers:
+        name = read_string(urlader, pointer["name"] - mtd2_offset)
+        value = read_string(urlader, pointer["value"] - mtd2_offset)
+        variables[name] = value
+
+    return variables
+
+
+def read_variable_pointers(urlader, endianess, relative_last_data_position):
+    """Read list of variable pointers"""
     pointers = []
     while urlader.tell() < relative_last_data_position:
         value = urlader.read(4)
@@ -81,12 +93,7 @@ def parse_urlader_v2(urlader, endianess, offset):
         )
     debug(f"List of pointers: {pointers}")
 
-    for pointer in pointers:
-        name = read_string(urlader, pointer["name"] - mtd2_offset)
-        value = read_string(urlader, pointer["value"] - mtd2_offset)
-        variables[name] = value
-
-    return variables
+    return pointers
 
 
 def read_string(urlader, position):
