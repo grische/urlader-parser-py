@@ -11,7 +11,7 @@ def debug(string):
         print(string)
 
 
-def parse_urlader_v2(file):
+def parse_urlader_v2(urlader, endianess, offset):
     """Parse urlader v2
     Parsing urlader mtd partition
     -------------------------------
@@ -41,62 +41,50 @@ def parse_urlader_v2(file):
     0x??+8  0xffff ffff ("end of data pointer")
     0x??+x  more 0xffff padding until first variable's value
     """
-    endianess = "big"
-    offset_start = 0x580
-    offset_memsize = offset_start + 0x24
+    offset_memsize = offset + 0x24
 
     variables = {}
-    with open(file, "rb") as urlader:
-        urlader.seek(offset_start)
-        version = urlader.read(4)
-        variables["version"] = int.from_bytes(version, endianess)
-        if variables["version"] != 2:
-            print(f"ERROR: Unsupported urlader version format { version }")
-            return variables
+    urlader.seek(offset_memsize)
+    variables["memsize"] = int.from_bytes(urlader.read(4), endianess)
+    variables["flashsize"] = int.from_bytes(urlader.read(4), endianess)
+    variables["unused1"] = int.from_bytes(urlader.read(4), endianess)
+    variables["unused2"] = int.from_bytes(urlader.read(4), endianess)
+    for i in range(0, 6):
+        mtd_name = f"mtd{i}"
+        variables[f"{mtd_name}_start"] = hex(int.from_bytes(urlader.read(4), endianess))
+        variables[f"{mtd_name}_length"] = hex(
+            int.from_bytes(urlader.read(4), endianess)
+        )
+    variables["unknown_data1"] = hex(int.from_bytes(urlader.read(4), endianess))
+    variables["unknown_data2"] = hex(int.from_bytes(urlader.read(4), endianess))
 
-        urlader.seek(offset_memsize)
-        variables["memsize"] = int.from_bytes(urlader.read(4), endianess)
-        variables["flashsize"] = int.from_bytes(urlader.read(4), endianess)
-        variables["unused1"] = int.from_bytes(urlader.read(4), endianess)
-        variables["unused2"] = int.from_bytes(urlader.read(4), endianess)
-        for i in range(0, 6):
-            mtd_name = f"mtd{i}"
-            variables[f"{mtd_name}_start"] = hex(
-                int.from_bytes(urlader.read(4), endianess)
-            )
-            variables[f"{mtd_name}_length"] = hex(
-                int.from_bytes(urlader.read(4), endianess)
-            )
-        variables["unknown_data1"] = hex(int.from_bytes(urlader.read(4), endianess))
-        variables["unknown_data2"] = hex(int.from_bytes(urlader.read(4), endianess))
+    last_data_position = int.from_bytes(urlader.read(4), endianess)
+    variables["last_data_position"] = hex(last_data_position)
 
-        last_data_position = int.from_bytes(urlader.read(4), endianess)
-        variables["last_data_position"] = hex(last_data_position)
+    # mtd2 is the urlader device
+    mtd2_offset = int(variables["mtd2_start"], 0)
+    relative_last_data_position = last_data_position - mtd2_offset
 
-        # mtd2 is the urlader device
-        mtd2_offset = int(variables["mtd2_start"], 0)
-        relative_last_data_position = last_data_position - mtd2_offset
+    pointers = []
+    while urlader.tell() < relative_last_data_position:
+        value = urlader.read(4)
+        name = urlader.read(4)
+        if value == b"\x00\x00\x00\x00" and name == b"\x00\x00\x00\x00":
+            debug(f"Found end of variables at {hex(urlader.tell())}")
+            break
 
-        pointers = []
-        while urlader.tell() < relative_last_data_position:
-            value = urlader.read(4)
-            name = urlader.read(4)
-            if value == b"\x00\x00\x00\x00" and name == b"\x00\x00\x00\x00":
-                debug(f"Found end of variables at {hex(urlader.tell())}")
-                break
+        pointers.append(
+            {
+                "value": int.from_bytes(value, endianess),
+                "name": int.from_bytes(name, endianess),
+            }
+        )
+    debug(f"List of pointers: {pointers}")
 
-            pointers.append(
-                {
-                    "value": int.from_bytes(value, endianess),
-                    "name": int.from_bytes(name, endianess),
-                }
-            )
-        debug(f"List of pointers: {pointers}")
-
-        for pointer in pointers:
-            name = read_string(urlader, pointer["name"] - mtd2_offset)
-            value = read_string(urlader, pointer["value"] - mtd2_offset)
-            variables[name] = value
+    for pointer in pointers:
+        name = read_string(urlader, pointer["name"] - mtd2_offset)
+        value = read_string(urlader, pointer["value"] - mtd2_offset)
+        variables[name] = value
 
     return variables
 
@@ -117,10 +105,32 @@ def read_string(urlader, position):
     return full_data.decode("utf-8")
 
 
+def parse_urlader(filepath):
+    """parse urlader file"""
+    endianess = "big"
+    offset_start = 0x580
+    variables = {}
+
+    with open(filepath, "rb") as urlader:
+        urlader.seek(offset_start)
+        version = urlader.read(4)
+        variables["version"] = int.from_bytes(version, endianess)
+        if variables["version"] == 2:
+            variables = {
+                **variables,
+                **parse_urlader_v2(urlader, endianess, offset_start),
+            }
+        else:
+            print(f"ERROR: Unsupported urlader version { version }")
+            return variables
+
+    return variables
+
+
 if __name__ == "__main__":
     import sys
     import json
 
     FILEPATH = sys.argv[1]
     debug(f"Parsing {FILEPATH}")
-    print(json.dumps(parse_urlader_v2(FILEPATH), indent=4))
+    print(json.dumps(parse_urlader(FILEPATH), indent=4))
