@@ -2,7 +2,7 @@
 
 """AVM URLADER parser"""
 
-DEBUG = False
+DEBUG = True
 
 
 def debug(string):
@@ -101,7 +101,7 @@ def parse_urlader_v3(urlader, endianess, offset):
     0x??+8  0xffff ffff ("end of data pointer")
     0x??+x  more 0xffff padding until first variable's value
     """
-    offset_end_of_struct = offset + 0x6C
+    urlader.seek(offset+4)
 
     variables = {}
     variables["memsize"] = hex(read_integer(urlader, endianess))
@@ -111,21 +111,42 @@ def parse_urlader_v3(urlader, endianess, offset):
         variables[f"{mtd_name}_start"] = hex(read_integer(urlader, endianess))
         variables[f"{mtd_name}_length"] = hex(read_integer(urlader, endianess))
 
-    while urlader.tell() < offset_end_of_struct:
-        pos = urlader.tell()  # no walrus operator to make Black happy
-        variables[f"unknown{hex(pos)}"] = hex(read_integer(urlader, endianess))
+    debug(
+        f"parse_urlader_v3: attempting to find end of variables starting at {hex(urlader.tell())}"
+    )
+    struct_end_candidate = read_integer(urlader, endianess)
 
-    struct_end = read_integer(urlader, endianess)
+    pointer_offset = 0
+
+    # Required for FB7360v2
+    if struct_end_candidate == 0xFFFFFFFF:
+        while struct_end_candidate == 0xFFFFFFFF:
+            struct_end_candidate = read_integer(urlader, endianess)
+        struct_end = struct_end_candidate
+        pointer_offset = int(variables["mtd2_start"], 0)
+        relative_last_data_position = struct_end - pointer_offset
+    # Required for FB4040
+    elif struct_end_candidate == 0x00000000:
+        while struct_end_candidate == 0x00000000:
+            struct_end_candidate = read_integer(urlader, endianess)
+        variables[f"unknown{hex(urlader.tell())}"] = hex(struct_end_candidate)
+        variables[f"unknown{hex(urlader.tell())}"] = hex(
+            read_integer(urlader, endianess)
+        )
+        struct_end = read_integer(urlader, endianess)
+
+        pointer_offset = struct_end - 0x140  # why 0x140???
+        relative_last_data_position = 0xFFFFFFFF  # random number
+    else:
+        print(variables)
+        raise Exception(f"Error: Unexpected struct_end_candidate {hex(struct_end_candidate)} at {hex(urlader.tell())}")
+
     variables["struct_end"] = hex(struct_end)
-
-    mtd2_offset = int(variables["mtd2_start"], 0)
-    relative_last_data_position = struct_end - mtd2_offset
-
     pointers = read_variable_pointers(urlader, endianess, relative_last_data_position)
 
     for pointer in pointers:
-        name = read_string(urlader, pointer["name"] - mtd2_offset)
-        value = read_string(urlader, pointer["value"] - mtd2_offset)
+        name = read_string(urlader, pointer["name"] - pointer_offset)
+        value = read_string(urlader, pointer["value"] - pointer_offset)
         variables[name] = value
 
     return variables
@@ -174,10 +195,8 @@ def read_integer(urlader, endianess):
     return int.from_bytes(urlader.read(4), endianess)
 
 
-def parse_urlader(filepath):
+def parse_urlader(filepath, endianess, offset_start):
     """parse urlader file"""
-    endianess = "big"
-    offset_start = 0x580
     variables = {}
 
     with open(filepath, "rb") as urlader:
@@ -201,10 +220,33 @@ def parse_urlader(filepath):
     return variables
 
 
+def identify_urlader(filepath):
+    """parse urlader file"""
+
+    with open(filepath, "rb") as urlader:
+        for endianess in ["big", "little"]:
+            for offset in [0x0, 0x580]:
+                urlader.seek(offset)
+                version_binary = urlader.read(4)
+                version = int.from_bytes(version_binary, endianess)
+                if version <= 5:
+                    debug(
+                        f"{endianess},{hex(offset)}: Found urlader version { version }"
+                    )
+                    return endianess, offset
+
+                debug(
+                    f"{endianess},{hex(offset)}: Unsupported urlader version { version }"
+                )
+
+    return None, None
+
+
 if __name__ == "__main__":
     import sys
     import json
 
     FILEPATH = sys.argv[1]
     debug(f"Parsing {FILEPATH}")
-    print(json.dumps(parse_urlader(FILEPATH), indent=4))
+    ENDIANESS, OFFSET = identify_urlader(FILEPATH)
+    print(json.dumps(parse_urlader(FILEPATH, ENDIANESS, OFFSET), indent=4))
