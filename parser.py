@@ -75,6 +75,68 @@ def parse_urlader_v2(urlader, endianess, offset):
     return variables
 
 
+def parse_urlader_v3(urlader, endianess, offset):
+    """Parse urlader v3
+    Parsing urlader mtd partition
+    -------------------------------
+    Offset  Content
+    0x57C   0x0000 0000
+    0x580   urlader version
+    0x584   memsize
+    0x588   flashsize
+    0x58C   full mtd start
+    0x590   empty
+    ...
+    0x5AC   mtd5 start
+    0x5B0   mtd5 size
+    0x5B4   padding 0xffff (on 7360v2)
+    ...     padding 0xffff (on 7360v2)
+    0x5E8   padding 0xffff (on 7360v2)
+    0x5EC   mtd pointer: end of pointer list
+    0x5F0   mtd pointer: first variable value (string)
+    0x5F4   mtd pointer: first variable name (string)
+    0x5FC   mtd pointer: second variable value (string)
+    0x600   mtd pointer: second variable name (string)
+    ...     mtd pointer to other variables
+    0x??    0x0000 0000 (two before "end of pointer list")
+    0x??+4  0x0000 0000 (one before "end of pointer list")
+    0x??+8  0xffff ffff ("end of data pointer")
+    0x??+x  more 0xffff padding until first variable's value
+    """
+    offset_end_of_struct = offset + 0x6C
+
+    variables = {}
+    variables["memsize"] = hex(int.from_bytes(urlader.read(4), endianess))
+    variables["flashsize"] = hex(int.from_bytes(urlader.read(4), endianess))
+    for postfix in range(0, 5):
+        mtd_name = f"mtd{postfix}"
+        variables[f"{mtd_name}_start"] = hex(int.from_bytes(urlader.read(4), endianess))
+        variables[f"{mtd_name}_length"] = hex(
+            int.from_bytes(urlader.read(4), endianess)
+        )
+
+    while urlader.tell() < offset_end_of_struct:
+        pos = urlader.tell()  # no walrus operator to make Black happy
+        variables[f"unknown{hex(pos)}"] = hex(
+            int.from_bytes(urlader.read(4), endianess)
+        )
+
+    struct_end = int.from_bytes(urlader.read(4), endianess)
+    variables["struct_end"] = hex(struct_end)
+
+    mtd2_offset = int(variables["mtd2_start"], 0)
+    relative_last_data_position = struct_end - mtd2_offset
+
+    pointers = read_variable_pointers(urlader, endianess, relative_last_data_position)
+
+    for pointer in pointers:
+        name = read_string(urlader, pointer["name"] - mtd2_offset)
+        value = read_string(urlader, pointer["value"] - mtd2_offset)
+        variables[name] = value
+
+    return variables
+
+
 def read_variable_pointers(urlader, endianess, relative_last_data_position):
     """Read list of variable pointers"""
     pointers = []
@@ -126,6 +188,11 @@ def parse_urlader(filepath):
             variables = {
                 **variables,
                 **parse_urlader_v2(urlader, endianess, offset_start),
+            }
+        elif variables["version"] == 3:
+            variables = {
+                **variables,
+                **parse_urlader_v3(urlader, endianess, offset_start),
             }
         else:
             print(f"ERROR: Unsupported urlader version { version }")
