@@ -45,20 +45,18 @@ def parse_urlader_v2(urlader, endianess, offset):
 
     variables = {}
     urlader.seek(offset_memsize)
-    variables["memsize"] = int.from_bytes(urlader.read(4), endianess)
-    variables["flashsize"] = int.from_bytes(urlader.read(4), endianess)
-    variables["unused1"] = int.from_bytes(urlader.read(4), endianess)
-    variables["unused2"] = int.from_bytes(urlader.read(4), endianess)
+    variables["memsize"] = read_integer(urlader, endianess)
+    variables["flashsize"] = read_integer(urlader, endianess)
+    variables["unused1"] = read_integer(urlader, endianess)
+    variables["unused2"] = read_integer(urlader, endianess)
     for i in range(0, 6):
         mtd_name = f"mtd{i}"
-        variables[f"{mtd_name}_start"] = hex(int.from_bytes(urlader.read(4), endianess))
-        variables[f"{mtd_name}_length"] = hex(
-            int.from_bytes(urlader.read(4), endianess)
-        )
-    variables["unknown_data1"] = hex(int.from_bytes(urlader.read(4), endianess))
-    variables["unknown_data2"] = hex(int.from_bytes(urlader.read(4), endianess))
+        variables[f"{mtd_name}_start"] = hex(read_integer(urlader, endianess))
+        variables[f"{mtd_name}_length"] = hex(read_integer(urlader, endianess))
+    variables["unknown_data1"] = hex(read_integer(urlader, endianess))
+    variables["unknown_data2"] = hex(read_integer(urlader, endianess))
 
-    last_data_position = int.from_bytes(urlader.read(4), endianess)
+    last_data_position = read_integer(urlader, endianess)
     variables["last_data_position"] = hex(last_data_position)
 
     # mtd2 is the urlader device
@@ -106,22 +104,18 @@ def parse_urlader_v3(urlader, endianess, offset):
     offset_end_of_struct = offset + 0x6C
 
     variables = {}
-    variables["memsize"] = hex(int.from_bytes(urlader.read(4), endianess))
-    variables["flashsize"] = hex(int.from_bytes(urlader.read(4), endianess))
+    variables["memsize"] = hex(read_integer(urlader, endianess))
+    variables["flashsize"] = hex(read_integer(urlader, endianess))
     for postfix in range(0, 5):
         mtd_name = f"mtd{postfix}"
-        variables[f"{mtd_name}_start"] = hex(int.from_bytes(urlader.read(4), endianess))
-        variables[f"{mtd_name}_length"] = hex(
-            int.from_bytes(urlader.read(4), endianess)
-        )
+        variables[f"{mtd_name}_start"] = hex(read_integer(urlader, endianess))
+        variables[f"{mtd_name}_length"] = hex(read_integer(urlader, endianess))
 
     while urlader.tell() < offset_end_of_struct:
         pos = urlader.tell()  # no walrus operator to make Black happy
-        variables[f"unknown{hex(pos)}"] = hex(
-            int.from_bytes(urlader.read(4), endianess)
-        )
+        variables[f"unknown{hex(pos)}"] = hex(read_integer(urlader, endianess))
 
-    struct_end = int.from_bytes(urlader.read(4), endianess)
+    struct_end = read_integer(urlader, endianess)
     variables["struct_end"] = hex(struct_end)
 
     mtd2_offset = int(variables["mtd2_start"], 0)
@@ -172,6 +166,12 @@ def read_string(urlader, position):
         data = urlader.read(1)
 
     return full_data.decode("utf-8")
+
+
+def read_integer(urlader, endianess):
+    """Read next 4 bytes with specified endianess"""
+    debug(f"Reading integer at {hex(urlader.tell())}")
+    return int.from_bytes(urlader.read(4), endianess)
 
 
 def parse_urlader(filepath):
